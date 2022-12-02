@@ -1,0 +1,398 @@
+---
+title: "General taks: Data insights and Q/A"
+subtitle: "Course: IDA (Introduction to Data Analytics with R) - TU Belrin"
+author: "Group 05: Aymen Baklouti, Dimitri Litvinenko, Ichrak Allagoui, Manuel Otero-Arcoz, Qing Huang"
+date: "SS 2022, 16.09.2022"
+output:
+  prettydoc::html_pretty:
+    toc: yes
+    theme: architect
+    highlight: github
+  pdf_document:
+    toc: yes
+---
+
+**Note the following packages are needed**
+
+`install.packages("plotly")`\
+`install.packages("dplyr")`\
+`install.packages("ggplot2")`\
+`install.packages("lubridate")`\
+`install.packages("fitdistrplus")` `install.packages("xts")`\
+`install.packages("FSelectorRcpp")`
+
+```{r libraries, message = FALSE, warning = FALSE}
+
+if(!require(plotly)){
+  install.packages("plotly")
+}
+library(plotly)
+
+if(!require(dplyr)){
+  install.packages("dplyr")
+}
+library(dplyr)
+
+if(!require(plyr)){
+  install.packages("dplyr")
+}
+library(plyr)
+
+if(!require(ggplot2)){
+  install.packages("ggplot2")
+}
+library(ggplot2)
+
+if(!require(lubridate)){
+  install.packages("lubridate")
+}
+library(lubridate)
+
+if(!require(fitdistrplus)){
+  install.packages("fitdistrplus")
+}
+library(fitdistrplus)
+
+if(!require(xts)){
+  install.packages("xts")
+}
+library(xts)
+
+if(!require(FSelectorRcpp)){
+  install.packages("FSelectorRcpp")
+}
+library(FSelectorRcpp)
+
+if (!require(prettydoc)) {
+  install.packages("prettydoc")
+}
+library(prettydoc)
+
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Packges
+
+```{r}
+suppressPackageStartupMessages({
+    library(ggplot2)
+    library(plotly, exclude = "select")
+    library(dplyr)
+    library(lubridate)
+    library(fitdistrplus)
+    library(xts)
+    library(FSelectorRcpp)
+})
+```
+
+## Import Data
+
+```{r}
+# Read Komponent K7
+komponent <- read.csv2("data/Logistikverzug/Komponente_K7.csv",header = TRUE, sep=";")
+
+# Read Logistikverzug K7
+logistikverzug <- read.csv2("data/Logistikverzug/Logistikverzug_K7.csv",header = TRUE, sep=",")
+
+# Merge "Komponent K7" and "Logistikverzug K7"
+logistics_delay <- merge(komponent, logistikverzug, by = c("IDNummer", "Herstellernummer", "Werksnummer"))
+
+# Delete irrelevant columns
+logistics_delay$X.x= logistics_delay$X.y = NULL
+
+```
+
+## Question 1
+
+### Question 1-a
+
+###### How is the logistics delay distributed? Justify your choice with statistical tests and briefly describe your approach.
+
+```{r}
+# Calculate date difference and create a new column "delay"
+logistics_delay$delay <- as.numeric(as.Date(logistics_delay$Wareneingang, format = "%Y-%m-%d") -
+                        as.Date(logistics_delay$Produktionsdatum, format="%Y-%m-%d")) -1
+
+#Histogram for logistic delay
+ggplot(logistics_delay, aes(delay)) +
+  geom_histogram(aes(y = ..density..), fill='lightgray', col='black', binwidth = 1) +
+  stat_function(fun = dnorm, args = list(mean=mean(logistics_delay$delay), sd=sd(logistics_delay$delay)))
+```
+
+The histogram shows us a useful overview of the data. At first glance, we can see that these data appear to be normally distributed.The sample distribution deviates very little from the theoretical bell curve distribution. To better understand the distribution, we use the QQ plot, which compares the theoretical quantiles with the actual quantiles of our variables.
+
+```{r}
+# Produce a normal QQ plot of the variable
+qqnorm(logistics_delay$delay, pch = 1, frame = FALSE) 
+
+# Add a reference line
+qqline(logistics_delay$delay, col = "steelblue", lwd = 2) 
+```
+
+The QQ plot shows that the data is definitely not normally distributed. Now we will figure out which distribution fits the data best. For this, a Cullen and Frey graph will be plotted.
+
+```{r}
+# Plot Cullen and Frey graph will be plotted.
+descdist(logistics_delay$delay, discrete=FALSE)
+```
+
+The graph shows that the log normal distribution, the gamma distribution and the Weibull distribution can fit the data quite well. Now the three hypothesis distributions will be tested and compared.
+
+```{r}
+# Fit all three distribution
+h1 <- fitdist(logistics_delay$delay, "lnorm")
+h2 <- fitdist(logistics_delay$delay, "gamma")
+h3 <- fitdist(logistics_delay$delay, "weibull")
+
+# Plot the histogram against fitted density functions of our 3 hypothesis
+denscomp(list(h1, h2, h3))
+
+# Plot the empirical cumulative distribution with theoretical ones
+cdfcomp(list(h1, h2, h3))
+
+# Plot the quantiles of each theoretical distribution ( x -axis) against the empirical quantiles of the data
+qqcomp(list(h1, h2, h3))
+
+# Plot the probabilities of each fitted distribution ( x x x -axis) against the empirical probabilities ( y y y -axis) 
+ppcomp(list(h1, h2, h3))
+```
+
+Except for the QQ plot, all three hypotheses cut out similarly. In the QQ plot, the points for the Weibull distribution did not produce a straight line, so this distribution is excluded. However, the points for the log normal distribution and the gamma distribution almost result in a straight line. If we look more closely at these two distributions, we see that the straight line obtained for the log normal distribution is closer to the theoretical straight line. Therefore, it follows: The log normal distribution reflects our data best.
+
+### Question 1-b
+
+###### Determine the mean of the logistics delay (watch out for weekends). Please interpret this number and discuss possible alternatives.
+
+```{r}
+# Convert type of columns to date
+logistics_delay$Produktionsdatum <- as.Date(logistics_delay$Produktionsdatum)
+logistics_delay$Wareneingang <- as.Date(logistics_delay$Wareneingang)
+
+# Determine weekday
+logistics_delay$Wochentag_prod <- lubridate::wday(logistics_delay$Produktionsdatum, label=TRUE)
+logistics_delay$Wochentag_eingang <- lubridate::wday(logistics_delay$Wareneingang, label=TRUE)
+
+# Plot frequency distribution of wares (Production and Entrance) depending on the weekday
+ggplot(data.frame(logistics_delay), aes(x=Wochentag_prod)) + ggtitle("Distribution of the produced items depending on the weekday") + xlab("Weekday") + ylab("Frequency") + geom_bar()
+ggplot(data.frame(logistics_delay), aes(x=Wochentag_eingang))+ ggtitle("Distribution of received items depending on the weekday") + xlab("Weekday") + ylab("Frequency") + geom_bar()
+```
+
+Through these two histograms it is clear that at the weekend both the number of received items and the number produced items are almost the same as during the week, that's why the weekend will be considered.
+
+```{r}
+# Mean Calculation of delay
+delay.mean <- mean(logistics_delay$delay)
+
+# Frequency table of logistic delay
+table(logistics_delay$delay)
+
+# Visualization of Boxplot
+boxplot(logistics_delay$delay, 
+        main = "Logistic delay (weekend is included)",
+        xlab = "Delay (in days)",
+        horizontal = TRUE)
+
+```
+
+75% of delays are between 3 and 7 days, which is not so far from the average. As a minimum delay we have 3 days, but this is rather an exception. There are also other outliers. These are between 10 and 14 days maximum. 6 days delay is the most common, about 40% of the operations. Overall, though, the delay is pretty okay, nonetheless there is potential for improvement.
+
+### Question 1-c
+
+###### Visualize the distribution in an appropriate way by displaying the histogram and the density function using "plotly". Please describe how you selected the size of the bins.
+
+```{r}
+# Plot Histogram for logistic delay
+fig <- ggplot(logistics_delay, aes(delay)) + 
+  geom_histogram(aes(y = ..density..),bins = 12) + 
+  xlab("delay (in days)")+
+  xlim(3, 15)+
+  geom_density(fill = "#ff4d4d", alpha = 0.5) + 
+  ggtitle("Logistic delay (weekend is included)")
+
+ ggplotly(fig)
+```
+
+To specify the exact values and include all data for the bins, we set the bin starting at 3 (minimum days of delay) and ending at 15 (because 14 days of delay is the maximum). The bin width is set to 1, so every bin represents exactly the number of items received on the given logistics delay.
+
+### Question 1-d
+
+###### Please describe how you proceed, if you have to create a decision tree, which is describing the classification problem to classify whether the component (K7) is defective (Fehlerhaft) or not? (Hint: You might want to work with visualizations.)
+
+```{r}
+# Read Komponente K7
+kmp7=read.delim("Data/Komponente/Komponente_K7.txt", header = TRUE, sep = "\t")
+
+# Fix data type
+kmp7$Fehlerhaft=as.factor(kmp7$Fehlerhaft)
+kmp7$Fehlerhaft_Datum=as.Date(kmp7$Fehlerhaft_Datum)
+
+# Add column "Produktionsdatum"
+komponent_cols <- komponent %>% dplyr::select(IDNummer, Produktionsdatum)
+kmp7 <- merge(kmp7, komponent_cols, by.x = "ID_Karosserie", by.y = "IDNummer") 
+rm(komponent_cols) # Remove komponent_cols 
+
+# Print out attributes of kmp7
+data.frame(Attributes = names(kmp7),row.names = NULL)
+```
+
+So as we could notice above, the Component_K7 table contains several attributes. We can use some of them to check if there is a relationship between them and our dependent variable "Fehlerhaft". In particular, the following indirect variables are interesting to investigate: Herstellernummer, Werksnummer, Fehlerhaft_Datum, Fehlerhaft_Fahrleistung and Produktionsdatum. Of course, other external indirect variables can have an influence on the direct variable. In this case, it is necessary to talk to domain experts first, that's why, we excluded this for our consideration. We will begin by checking if our time series has a pattern.
+
+```{r}
+# Pattern-Based Analysis of Time Series using the variable "Fehlerhaft_Datum"
+
+## Feature engineering of production date
+kmp7$defect_period <- format(as.Date(kmp7$Fehlerhaft_Datum), "%Y-%m")
+
+### Group by period and summarise defects or not
+
+defect_grouped=kmp7 %>% group_by(defect_period,Fehlerhaft)  %>%
+                    dplyr::summarise(n= n(),
+                              .groups = 'drop')
+defect_grouped=defect_grouped[!is.na(defect_grouped$defect_period), ]
+
+### Month to period
+defect_grouped$period <- seq.int(nrow(defect_grouped))
+
+### Plot defect over the time
+ggplot(defect_grouped, aes(x=period)) + 
+  geom_line(aes(y = n)) + 
+  labs(title = "Defects over the time", y = "Number of decfects", color = "") 
+
+### Decompose our time series in Level, trend, season and residual/noise
+defect_grouped$defect_period= as.Date(paste(defect_grouped$defect_period,"-01",sep=""))
+defect_grouped_ts <- xts(defect_grouped$n, order.by=as.Date(defect_grouped$defect_period))        # Convert data frame to time series
+defect_grouped_ts <- ts(defect_grouped_ts, frequency = 12, start = 2010, end= 2018)
+defect_grouped_ts_components <- decompose(defect_grouped_ts)
+plot(defect_grouped_ts_components)
+```
+
+After the previous analysis, we can assume that are dealing with a conventional level, trend, season, noise time series. This repetitive cycle can hide the signal we aim to model in the forecast, and in turn can provide a strong signal to our forecast models.This means that for our decision tree model it would be important to know which month we are in. In the following we will investigate whether the manufacturer number has an influence on the direct variable.
+
+```{r}
+# Comparative representation of double bars to visualize the number of defects (or not defects) depending on the manufacturer number
+
+hr_fhr<-data.frame(kmp7$Herstellernummer,kmp7$Fehlerhaft)
+Table<-with(hr_fhr,table(kmp7$Herstellernummer,kmp7$Fehlerhaft))
+barplot(Table,beside=TRUE,legend=TRUE,xlab = "Condition (defective = 1  not defective = 0)", ylab = "Frequency",args.legend=list(title="Manufacturer number"),main = "Components depending on manufacturer nr. and condition" )
+```
+
+As you can see the number of defective or non-defective components are the same for both manufacturers, so it is assumed that this feature is irrelevant for our Decision Tree model. Next, the variable mileage will be analyzed.
+
+```{r, warning=FALSE}
+#Investigation of the possible direct variable "Fahrleistung"
+defects_fhr_lg= data.frame(kmp7$Fehlerhaft_Fahrleistung[kmp7$Fehlerhaft==1])
+colnames(defects_fhr_lg)[1] = "mileage"
+
+ggplot(defects_fhr_lg, aes(x=`mileage`)) + geom_histogram(bins = 30)+
+  labs(title = "Mileage when komponent k7 is defect",x="Mileage", y = "Frequency", color = "") 
+
+# Test significance using log Regression
+summary(glm(Fehlerhaft~Fehlerhaft_Fahrleistung,data=kmp7,family=binomial))
+
+```
+
+With the help of the histogram you can observe that when the mileage is over 42000, the component K7 starts to fail. Moreover, you can see that the component is mostly defective between 43500 and 45200 km. Lastly, the component can very rarely last up to about 50800 km. Even if the log regression shows that the mileage is not statistically relevant, this information is treated with caution for the time being. Perhaps a bit more feature engineering is needed to prove this. Of course, a little talk with domain experts will also help in that case. Furthermore we can calculate the information gain of each feature.
+
+```{r}
+# Feature engineering for "Produktionsdatum"
+kmp7$prod_period <- format(as.Date(kmp7$Produktionsdatum), "%Y-%m")
+
+# Calculate information gain
+Information_gain <- information_gain(Fehlerhaft ~ Herstellernummer+Werksnummer+Fehlerhaft_Fahrleistung+prod_period+defect_period, data=kmp7)
+Information_gain
+```
+
+Calculating the gain information of the different features shows that in the first place both the "Fehlerhaft_Fahrleistung" and "Fehlerhaft_Datum" are equally informative and relevant. In the next position stands the production date. Finally, the factory number and manufacturer number are irrelevant. If we would build a decision tree model, the very first approach would be to take the mileage as the 1st layer, the 2nd layer would be "Fehlerhaft_Datum" (In other words, for how long time the component has been active) and the 3rd layer would be "Produktionsdatum".
+
+## Question 2
+
+###### Why does it make sense to store the available data in separate files instead of saving everything in a huge table? Name at least four benefits. The available tables represent a typical data base structure. How is it called?
+
+1.) Too much information can mask interesting and important features of data. Readability of singles files is greater.
+
+2.) Not everything is relevant for certain areas, or it may even be the case that some people in the organization are not allowed to access certain sensitive data (e.g. due to data protection).
+
+3.) Having all data in a single file can lead to storage problems. Reading it will take a long time or won't be able to open. This implies, data is faster accessible and has an improved performance, if they're separated. (Also requesting data is faster.) Therefore, less requirement of hardware is needed.
+
+4.) It is easier to combine specific files with each other than to eliminate data from a big single file. For that reason, data manipulation like restoring, deleting, or adding features are easier on separated files. They are accordingly easier administered and managed.
+
+5.) Seperated files have higher resistance against data crashes and if one crashes other data is not impacted.
+
+6.) Different files of data can be used by different people. When all data is in one file and several people are working on different things, it could interfere with someone else's work and lead to unnecessary conflicts. This would be the case if the work is done on a hosted data base.
+
+7.) Compilation errors are easier to find, as the compilation time will indicate in what file the issue lays.
+
+8.) Redundancy is more likely to happen in huge tables than in separated files. Redundancy in huge tables is possibly avoidable but is more extensive and complicated.
+
+The typical data basebase structure is called "Relational Database".
+
+## Question 3
+
+###### How many of the parts T16 ended up in vehicles registered in Adelshofen?
+
+```{r}
+# Read Bestandteile data
+Bestandteile_OEM1_Typ11 <- read.csv2("Data/Fahrzeug/Bestandteile_Fahrzeuge_OEM1_Typ11.csv", sep=";") 
+Bestandteile_OEM1_Typ12 <- read.csv2("Data/Fahrzeug/Bestandteile_Fahrzeuge_OEM1_Typ12.csv", sep=";") 
+Bestandteile_OEM1_Typ21 <- read.csv2("Data/Fahrzeug/Bestandteile_Fahrzeuge_OEM2_Typ21.csv", sep=";") 
+Bestandteile_OEM1_Typ22 <- read.csv2("Data/Fahrzeug/Bestandteile_Fahrzeuge_OEM2_Typ22.csv", sep=";") 
+
+# Create Dataframe "Bestandteile" which combine all Components together and then select needed columns
+Bestandteile <- bind_rows(Bestandteile_OEM1_Typ11, Bestandteile_OEM1_Typ12, Bestandteile_OEM1_Typ21, Bestandteile_OEM1_Typ22) %>%
+  dplyr::select(ID_Sitze, ID_Fahrzeug)
+
+# Filter by Bestandteile "K2LE2" and "K2ST2" 
+Bestandteile=Bestandteile[grepl("K2ST2-*|K2LE2-*",as.character(Bestandteile$ID_Sitze)),]
+
+# Read Zulassungen data
+registration_cars=read.csv2("Data/Zulassungen/Zulassungen_alle_Fahrzeuge.csv")
+
+# Rename column "IDNummer" to "ID_Fahrzeug"
+names(registration_cars)[2]<-"ID_Fahrzeug"
+
+# Join the two datasets "Bestandteile" and "registration_cars"  and filter by municipality "Adelshofen 
+T16_Adelshofen <- merge(Bestandteile, registration_cars, by ="ID_Fahrzeug") %>%
+                  filter(Gemeinden == "ADELSHOFEN")
+
+# Find out number of parts of vehicles registered in Adelshofen
+nrow(T16_Adelshofen)
+```
+
+48 parts T16 ended up in vehicles registered in Adelshofen.
+
+## Question 4
+
+###### Which data types do the attributes of the registration table "Zulassungen_aller_Fahrzeuge" have? Put your answers into a table which is integrated into your Markdown document and describe the characteristics of the data type(s).
+
+```{r}
+# Print out attributes and the corresponding type
+data.frame(attribute = names(registration_cars),
+           type = sapply(registration_cars, typeof),
+           row.names = NULL)
+```
+
+## Question 5
+
+###### You want to publish your application. Why does it make sense to store the records on the database of a server? Why can't you store the records on your personal computer? What is an easy way to make your application available to your customers? Please name 4 aspects.
+
+The main reason to store all data on a server is because it is engineered to be permanent accessible. If the records would have been stored in a personal computer, the application wouldn't have access to the data at all hours. The activeness and connection with the internet on a personal computer are guaranteed less than in a server. Therefore, less reliable. Although hosting costs a bit of money, on the other hand, it saves administrative and IT costs. In addition, a server has more processing power, RAM and storage capacity. The personal computer is also less efficient as it has a lot of other personal things running in the background which is unnecessary in this regard. Furthermore, the security of data is better ensured in a server since it is often equipped with multiple layers of protection. A server also has RAIDs installed in case of a hard drive failure. This means that if you have a system failure while working on a database server, your valuable data will be automatically restored so that it is consistent again without any problems. The best way for making your application available to you customers is having it accessible in the App-Store or Website.
+
+## Question 6
+
+###### On 11.08.2010 there was a hit and run accident. There is no trace of the license plate of the car involved in the accident. The police asks for your help, as you work for the Federal Motor Transport Authority, and asks where the vehicle with the body part number "K5-112-1122-79" was registered.
+
+```{r}
+#  Combine all Components together and merge it to registrations. Afterwards, filter by ID_Karosserie is K5-112-1122-79
+accident_body <- bind_rows(Bestandteile_OEM1_Typ11, Bestandteile_OEM1_Typ12, Bestandteile_OEM1_Typ21, Bestandteile_OEM1_Typ22) %>%
+left_join(registration_cars, by = c("ID_Fahrzeug")) %>%
+filter(ID_Karosserie == "K5-112-1122-79")
+
+# Print out result
+accident_body[c('ID_Karosserie','Gemeinden')]
+
+```
+
+The vehicle with the body part number "K5-112-1122-79" was registered in ASCHERSLEBEN
